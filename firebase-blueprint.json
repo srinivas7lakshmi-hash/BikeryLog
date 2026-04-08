@@ -1,0 +1,79 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Bike": {
+      "title": "Bike",
+      "description": "Information about a motorcycle",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "brand": { "type": "string" },
+        "model": { "type": "string" },
+        "year": { "type": "number" },
+        "currentMileage": { "type": "number" },
+        "lastChainLubeMileage": { "type": "number" },
+        "lastWashDate": { "type": "string", "format": "date-time" },
+        "lastServiceDate": { "type": "string", "format": "date-time" },
+        "lastServiceMileage": { "type": "number" },
+        "imageUrl": { "type": "string" }
+      },
+      "required": ["userId", "brand", "model", "currentMileage"]
+    },
+    "ServiceLog": {
+      "title": "ServiceLog",
+      "description": "Maintenance and service history for a bike",
+      "type": "object",
+      "properties": {
+        "bikeId": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "mileage": { "type": "number" },
+        "description": { "type": "string" },
+        "cost": { "type": "number" },
+        "type": { "type": "string", "enum": ["service", "repair", "modification", "chain-lube", "wash"] }
+      },
+      "required": ["bikeId", "userId", "date", "mileage", "description", "type"]
+    },
+    "MileageLog": {
+      "title": "MileageLog",
+      "description": "Log of miles driven",
+      "type": "object",
+      "properties": {
+        "bikeId": { "type": "string" },
+        "userId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "mileage": { "type": "number" },
+        "tripDistance": { "type": "number" }
+      },
+      "required": ["bikeId", "userId", "date", "mileage"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/bikes/{bikeId}": {
+      "schema": "Bike",
+      "description": "Motorcycle data"
+    },
+    "/serviceLogs/{logId}": {
+      "schema": "ServiceLog",
+      "description": "Service history logs"
+    },
+    "/mileageLogs/{logId}": {
+      "schema": "MileageLog",
+      "description": "Mileage tracking logs"
+    }
+  }
+}

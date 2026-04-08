@@ -1,0 +1,90 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    function uidUnchanged() {
+      return !('userId' in request.resource.data) || request.resource.data.userId == request.auth.uid;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return data.keys().hasOnly(['uid', 'email', 'displayName']) &&
+             data.uid is string && data.uid.size() > 0 &&
+             data.email is string && isValidEmail(data.email);
+    }
+
+    function isValidBike(data) {
+      return data.keys().hasAll(['userId', 'brand', 'model', 'currentMileage']) &&
+             data.userId == request.auth.uid &&
+             data.brand is string && data.brand.size() > 0 && data.brand.size() < 100 &&
+             data.model is string && data.model.size() > 0 && data.model.size() < 100 &&
+             data.currentMileage is number && data.currentMileage >= 0;
+    }
+
+    function isValidServiceLog(data) {
+      return data.keys().hasAll(['bikeId', 'userId', 'date', 'mileage', 'description', 'type']) &&
+             data.userId == request.auth.uid &&
+             data.bikeId is string &&
+             data.mileage is number && data.mileage >= 0 &&
+             data.type in ['service', 'repair', 'modification', 'chain-lube', 'wash'];
+    }
+
+    function isValidMileageLog(data) {
+      return data.keys().hasAll(['bikeId', 'userId', 'date', 'mileage']) &&
+             data.userId == request.auth.uid &&
+             data.bikeId is string &&
+             data.mileage is number && data.mileage >= 0;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+    }
+
+    match /bikes/{bikeId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidBike(request.resource.data);
+      allow update: if isAuthenticated() && isDocOwner() && isValidBike(request.resource.data) && uidUnchanged();
+      allow delete: if isAuthenticated() && isDocOwner();
+    }
+
+    match /serviceLogs/{logId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidServiceLog(request.resource.data);
+      allow update: if isAuthenticated() && isDocOwner() && isValidServiceLog(request.resource.data) && uidUnchanged();
+      allow delete: if isAuthenticated() && isDocOwner();
+    }
+
+    match /mileageLogs/{logId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && isValidMileageLog(request.resource.data);
+      allow update: if isAuthenticated() && isDocOwner() && isValidMileageLog(request.resource.data) && uidUnchanged();
+      allow delete: if isAuthenticated() && isDocOwner();
+    }
+  }
+}

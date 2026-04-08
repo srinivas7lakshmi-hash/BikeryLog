@@ -1,0 +1,5 @@
+{
+  "name": "MotoLog",
+  "description": "A comprehensive bike management app for enthusiasts to track service history, mileage, and maintenance reminders.",
+  "requestFramePermissions": []
+}
