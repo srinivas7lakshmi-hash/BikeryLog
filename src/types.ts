@@ -2,6 +2,20 @@ export interface UserProfile {
   uid: string;
   email: string;
   displayName?: string;
+  username?: string;
+  phoneNumber?: string;
+  age?: number;
+  bio?: string;
+  location?: string;
+  photoURL?: string;
+  customSoundURL?: string;
+  drivingLicenseUrl?: string;
+  rcBookUrl?: string;
+  bikeDocsUrl?: string;
+  insuranceUrl?: string;
+  dateOfBirth?: string;
+  theme?: 'light' | 'dark';
+  emergencyFiles?: { name: string, url: string, type: string, uploadedAt: string }[];
 }
 
 export interface Bike {
@@ -37,6 +51,7 @@ export interface FuelLog {
   cost: number;
   quantity: number;
   mileage: number;
+  location?: string;
   imageUrl?: string;
 }
 

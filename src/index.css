@@ -3,11 +3,50 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  
+  --color-zinc-950: var(--bg-primary);
+  --color-zinc-900: var(--bg-secondary);
+  --color-zinc-800: var(--bg-tertiary);
+  --color-zinc-700: var(--bg-quaternary);
+  --color-zinc-100: var(--text-primary);
+  --color-zinc-200: var(--border-color);
+  --color-zinc-400: var(--text-secondary);
+  --color-zinc-500: var(--text-tertiary);
 }
 
 @layer base {
+  :root {
+    --bg-primary: #09090b; /* zinc-950 */
+    --bg-secondary: #18181b; /* zinc-900 */
+    --bg-tertiary: #27272a; /* zinc-800 */
+    --bg-quaternary: #3f3f46; /* zinc-700 */
+    --text-primary: #f4f4f5; /* zinc-100 */
+    --text-secondary: #a1a1aa; /* zinc-400 */
+    --text-tertiary: #71717a; /* zinc-500 */
+    --border-color: #27272a; /* zinc-800 */
+  }
+
+  :root.light {
+    --bg-primary: #fafafa; /* zinc-50 */
+    --bg-secondary: #ffffff; /* white */
+    --bg-tertiary: #f4f4f5; /* zinc-100 */
+    --bg-quaternary: #e4e4e7; /* zinc-200 */
+    --text-primary: #09090b; /* zinc-950 */
+    --text-secondary: #52525b; /* zinc-600 */
+    --text-tertiary: #71717a; /* zinc-500 */
+    --border-color: #e4e4e7; /* zinc-200 */
+  }
+
   body {
-    @apply bg-zinc-950 text-zinc-100;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+}
+
+@layer utilities {
+  .text-white {
+    color: var(--text-primary);
   }
 }
 
@@ -17,9 +56,14 @@
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-zinc-900;
+  background-color: var(--bg-secondary);
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-zinc-800 rounded-full hover:bg-zinc-700 transition-colors;
+  background-color: var(--bg-tertiary);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-zinc-700;
 }

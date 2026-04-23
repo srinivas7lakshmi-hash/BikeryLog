@@ -18,6 +18,7 @@ import {
   onSnapshot, 
   addDoc, 
   updateDoc, 
+  setDoc,
   doc, 
   deleteDoc, 
   orderBy,
@@ -26,7 +27,7 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { auth, db, storage } from './firebase';
-import { Bike, ServiceLog, MileageLog, Reminder, FuelLog } from './types';
+import { Bike, ServiceLog, MileageLog, Reminder, FuelLog, UserProfile } from './types';
 import { 
   Bike as BikeIcon, 
   Plus, 
@@ -48,8 +49,25 @@ import {
   X,
   Check,
   Fuel,
+  Search,
+  Info,
+  Github,
+  Linkedin,
+  ExternalLink,
+  Code2,
+  User2,
+  Bell,
+  BellRing,
+  Volume2,
+  Settings,
+  Music,
+  FileText,
+  Shield,
   Download,
-  Search
+  LayoutGrid,
+  HardDrive,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { format, differenceInDays, parseISO, addDays, startOfDay } from 'date-fns';
@@ -120,6 +138,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [bikes, setBikes] = useState<Bike[]>([]);
   const [selectedBike, setSelectedBike] = useState<Bike | null>(null);
@@ -136,34 +155,109 @@ export default function App() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showCompletedReminders, setShowCompletedReminders] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+  const [showProjectInfo, setShowProjectInfo] = useState(false);
+  const [showProfileSettings, setShowProfileSettings] = useState(false);
+  const [showNextServicePrompt, setShowNextServicePrompt] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<{ id: string, title: string, message: string }[]>([]);
   const [activeTab, setActiveTab] = useState<'service' | 'fuel'>('service');
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
 
+  // Theme Effect
+  useEffect(() => {
+    if (userProfile?.theme === 'light') {
+      document.documentElement.classList.add('light');
+    } else {
+      document.documentElement.classList.remove('light');
+    }
+  }, [userProfile?.theme]);
+
   // Auth Listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
-      setLoading(false);
+      if (!user) {
+        setUserProfile(null);
+        setLoading(false);
+      }
     });
     return () => unsubscribe();
   }, []);
 
-  // Connection Test
+  // Profile Listener
   useEffect(() => {
-    async function testConnection() {
-      try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration.");
-        }
+    if (!user) return;
+
+    const unsubscribe = onSnapshot(doc(db, 'users', user.uid), (docSnap) => {
+      if (docSnap.exists()) {
+        setUserProfile({ uid: user.uid, ...docSnap.data() } as UserProfile);
+      } else {
+        // Create initial profile if it doesn't exist using setDoc with UID
+        const initialProfile: UserProfile = {
+          uid: user.uid,
+          email: user.email || '',
+          displayName: user.displayName || '',
+          photoURL: user.photoURL || ''
+        };
+        setDoc(doc(db, 'users', user.uid), initialProfile).catch(err => console.error(err));
       }
-    }
-    testConnection();
-  }, []);
+      setLoading(false);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const playNotificationSound = () => {
+    // Use custom sound if available, otherwise default to bike revving
+    // Using a more reliable default sound URL
+    const soundURL = userProfile?.customSoundURL || 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_517478696b.mp3?filename=motorcycle-revving-6028.mp3';
+    const audio = new Audio(soundURL); 
+    audio.play().catch(e => console.error('Audio play failed:', e));
+  };
+
+  const addNotification = (title: string, message: string) => {
+    const id = Math.random().toString(36).substr(2, 9);
+    setNotifications(prev => [...prev, { id, title, message }]);
+    playNotificationSound();
+    setTimeout(() => {
+      setNotifications(prev => prev.filter(n => n.id !== id));
+    }, 5000);
+  };
+
+  // Notification Checker
+  useEffect(() => {
+    if (!user || reminders.length === 0) return;
+
+    const checkReminders = () => {
+      const now = new Date();
+      const today = startOfDay(now);
+      
+      reminders.forEach(reminder => {
+        if (reminder.isCompleted) return;
+        
+        const reminderDate = parseISO(reminder.date);
+        const daysDiff = differenceInDays(reminderDate, today);
+
+        // Notify if due today or tomorrow
+        if (daysDiff >= 0 && daysDiff <= 1) {
+          const storageKey = `notified_${reminder.id}_${today.toISOString()}`;
+          if (!localStorage.getItem(storageKey)) {
+            addNotification('Service Reminder', `${reminder.title} is due ${daysDiff === 0 ? 'today' : 'tomorrow'}!`);
+            localStorage.setItem(storageKey, 'true');
+          }
+        }
+      });
+    };
+
+    checkReminders();
+    const interval = setInterval(checkReminders, 1000 * 60 * 60); // Check every hour
+    return () => clearInterval(interval);
+  }, [user, reminders]);
 
   // Data Fetching
   useEffect(() => {
@@ -374,7 +468,7 @@ export default function App() {
       rows.push([
         'Fuel',
         log.date,
-        `Refuel at ${log.mileage} KM`,
+        `Refuel at ${log.mileage} KM${log.location ? ` (${log.location})` : ''}`,
         log.cost.toString(),
         `${log.quantity} L`
       ]);
@@ -501,7 +595,40 @@ export default function App() {
             <h1 className="text-xl font-bold tracking-tight">MotoLog</h1>
           </div>
           <div className="flex items-center gap-4">
-            <img src={user.photoURL || ''} className="w-8 h-8 rounded-full border border-zinc-700" alt="Profile" />
+            <div className="relative">
+              <button 
+                className="p-2 text-zinc-400 hover:text-orange-500 hover:bg-orange-500/10 rounded-xl transition-all"
+                title="Notifications"
+              >
+                <Bell className="w-5 h-5" />
+                {notifications.length > 0 && (
+                  <span className="absolute top-1 right-1 w-2 h-2 bg-orange-500 rounded-full animate-ping" />
+                )}
+              </button>
+            </div>
+            <button 
+              onClick={() => setShowProjectInfo(true)}
+              className="p-2 text-zinc-400 hover:text-orange-500 hover:bg-orange-500/10 rounded-xl transition-all"
+              title="Project Info"
+            >
+              <Info className="w-5 h-5" />
+            </button>
+            <button 
+              onClick={() => setShowProfileSettings(true)}
+              className="relative group p-1 rounded-full hover:bg-zinc-800 transition-all"
+              title="Profile Settings"
+            >
+              <div className="relative">
+                <img 
+                  src={userProfile?.photoURL || user.photoURL || ''} 
+                  className="w-9 h-9 rounded-full border-2 border-zinc-800 group-hover:border-orange-500 transition-all object-cover" 
+                  alt="Profile" 
+                />
+                <div className="absolute -bottom-1 -right-1 bg-orange-500 border-2 border-zinc-950 rounded-full p-1 text-white shadow-lg">
+                  <Settings className="w-2.5 h-2.5" />
+                </div>
+              </div>
+            </button>
             <button onClick={handleLogout} className="text-zinc-400 hover:text-white transition-colors">
               <LogOut className="w-5 h-5" />
             </button>
@@ -510,6 +637,35 @@ export default function App() {
       </header>
 
       <main className="max-w-5xl mx-auto p-4 md:p-8 space-y-8">
+        {/* Notification Toasts */}
+        <div className="fixed top-24 right-4 z-[150] space-y-2 pointer-events-none">
+          <AnimatePresence>
+            {notifications.map(n => (
+              <motion.div
+                key={n.id}
+                initial={{ opacity: 0, x: 50, scale: 0.9 }}
+                animate={{ opacity: 1, x: 0, scale: 1 }}
+                exit={{ opacity: 0, x: 20, scale: 0.9 }}
+                className="bg-zinc-900 border border-orange-500/30 p-4 rounded-2xl shadow-2xl flex items-start gap-4 pointer-events-auto max-w-sm backdrop-blur-xl"
+              >
+                <div className="bg-orange-500 p-2 rounded-xl">
+                  <BellRing className="w-4 h-4 text-white" />
+                </div>
+                <div>
+                  <h5 className="text-sm font-bold text-white">{n.title}</h5>
+                  <p className="text-xs text-zinc-400 mt-1">{n.message}</p>
+                </div>
+                <button 
+                  onClick={() => setNotifications(prev => prev.filter(notif => notif.id !== n.id))}
+                  className="text-zinc-600 hover:text-zinc-400"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+
         {/* Bike Selection */}
         <section className="space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -972,7 +1128,20 @@ export default function App() {
                   </div>
 
               {/* Filters */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 bg-zinc-900/50 p-4 rounded-3xl border border-zinc-800">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 bg-zinc-900/50 p-4 rounded-3xl border border-zinc-800">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Search</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+                    <input 
+                      type="text"
+                      placeholder="Keywords..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-xl pl-9 pr-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+                    />
+                  </div>
+                </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Type</label>
                   <select 
@@ -1014,7 +1183,10 @@ export default function App() {
                     const logDate = parseISO(log.date);
                     const matchesStart = !startDate || logDate >= parseISO(startDate);
                     const matchesEnd = !endDate || logDate <= parseISO(endDate);
-                    return matchesType && matchesStart && matchesEnd;
+                    const matchesSearch = !searchQuery || 
+                      log.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                      log.type.toLowerCase().includes(searchQuery.toLowerCase());
+                    return matchesType && matchesStart && matchesEnd && matchesSearch;
                   })
                   .map(log => (
                   <div key={log.id} className="bg-zinc-900 p-5 rounded-3xl border border-zinc-800 flex items-start gap-4">
@@ -1070,14 +1242,32 @@ export default function App() {
               </div>
 
               <div className="space-y-4">
-                {fuelLogs.map(log => (
+                {fuelLogs
+                  .filter(log => {
+                    const logDate = parseISO(log.date);
+                    const matchesStart = !startDate || logDate >= parseISO(startDate);
+                    const matchesEnd = !endDate || logDate <= parseISO(endDate);
+                    const matchesSearch = !searchQuery || 
+                      (log.location?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                      `Refuel at ${log.mileage}`.toLowerCase().includes(searchQuery.toLowerCase());
+                    return matchesStart && matchesEnd && matchesSearch;
+                  })
+                  .map(log => (
                   <div key={log.id} className="bg-zinc-900 p-5 rounded-3xl border border-zinc-800 flex items-start gap-4">
                     <div className="p-3 rounded-2xl shrink-0 bg-green-500/10 text-green-500">
                       <Fuel className="w-5 h-5" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-start">
-                        <h4 className="font-semibold text-white truncate">Refuel at {log.mileage.toLocaleString()} KM</h4>
+                        <div className="flex flex-col">
+                          <h4 className="font-semibold text-white truncate">Refuel at {log.mileage.toLocaleString()} KM</h4>
+                          {log.location && (
+                            <div className="flex items-center gap-1 text-[10px] text-zinc-500">
+                              <Search className="w-2.5 h-2.5" />
+                              {log.location}
+                            </div>
+                          )}
+                        </div>
                         <span className="text-xs text-zinc-500 font-mono">{format(parseISO(log.date), 'MMM d, yyyy')}</span>
                       </div>
                       <div className="flex items-center gap-6 mt-2">
@@ -1131,6 +1321,7 @@ export default function App() {
           <LogForm 
             bike={selectedBike} 
             onClose={() => setShowLogForm(false)} 
+            setShowNextServicePrompt={setShowNextServicePrompt}
           />
         )}
         {showMileageForm && selectedBike && (
@@ -1149,6 +1340,22 @@ export default function App() {
           <FuelLogForm 
             bike={selectedBike} 
             onClose={() => setShowFuelForm(false)} 
+          />
+        )}
+        {showProjectInfo && (
+          <ProjectInfoModal onClose={() => setShowProjectInfo(false)} />
+        )}
+        {showProfileSettings && userProfile && (
+          <ProfileSettingsModal 
+            profile={userProfile} 
+            onClose={() => setShowProfileSettings(false)} 
+            playNotificationSound={playNotificationSound}
+          />
+        )}
+        {showNextServicePrompt && (
+          <NextServicePrompt 
+            bikeId={showNextServicePrompt} 
+            onClose={() => setShowNextServicePrompt(null)} 
           />
         )}
         {showEditBike && (
@@ -1363,7 +1570,8 @@ function BikeForm({ userId, bike, onClose }: { userId: string, bike?: Bike, onCl
   );
 }
 
-function LogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
+function LogForm({ bike, onClose, setShowNextServicePrompt }: { bike: Bike, onClose: () => void, setShowNextServicePrompt: (id: string) => void }) {
+  const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [type, setType] = useState<ServiceLog['type']>('service');
   const [description, setDescription] = useState('');
   const [cost, setCost] = useState('');
@@ -1398,7 +1606,7 @@ function LogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
       const logData = {
         bikeId: bike.id,
         userId: bike.userId,
-        date: new Date().toISOString(),
+        date,
         mileage: parseInt(mileage),
         description,
         cost: parseFloat(cost) || null,
@@ -1423,6 +1631,11 @@ function LogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
       }
 
       await updateDoc(doc(db, 'bikes', bike.id), updates);
+      
+      if (type === 'service') {
+        setShowNextServicePrompt(bike.id);
+      }
+      
       onClose();
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'serviceLogs');
@@ -1510,6 +1723,16 @@ function LogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
+              <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Date</label>
+              <input 
+                required
+                type="date"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+              />
+            </div>
+            <div className="space-y-2">
               <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Mileage (KM)</label>
               <input 
                 required
@@ -1519,16 +1742,16 @@ function LogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
                 className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
               />
             </div>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Cost (₹)</label>
-              <input 
-                type="number"
-                value={cost}
-                onChange={e => setCost(e.target.value)}
-                placeholder="Optional"
-                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
-              />
-            </div>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Cost (₹)</label>
+            <input 
+              type="number"
+              value={cost}
+              onChange={e => setCost(e.target.value)}
+              placeholder="Optional"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+            />
           </div>
           <button 
             type="submit"
@@ -1551,21 +1774,46 @@ function LogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
 }
 
 function MileageForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
+  const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [mileage, setMileage] = useState(bike.currentMileage.toString());
   const [trip, setTrip] = useState('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setImagePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setUploading(true);
     try {
+      let imageUrl = '';
+      if (imageFile) {
+        const storageRef = ref(storage, `mileage/${bike.userId}/${Date.now()}_${imageFile.name}`);
+        const snapshot = await uploadBytes(storageRef, imageFile);
+        imageUrl = await getDownloadURL(snapshot.ref);
+      }
+
       const newMileage = parseInt(mileage);
       const tripDistance = parseInt(trip) || (newMileage - bike.currentMileage);
 
       await addDoc(collection(db, 'mileageLogs'), {
         bikeId: bike.id,
         userId: bike.userId,
-        date: new Date().toISOString(),
+        date,
         mileage: newMileage,
-        tripDistance
+        tripDistance,
+        imageUrl
       });
 
       await updateDoc(doc(db, 'bikes', bike.id), {
@@ -1574,6 +1822,8 @@ function MileageForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
       onClose();
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'mileageLogs');
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -1597,32 +1847,70 @@ function MileageForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
           </button>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* Image Upload */}
           <div className="space-y-2">
-            <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">New Total KM</label>
+            <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Ride Photo (Optional)</label>
+            <div 
+              onClick={() => document.getElementById('mileage-image')?.click()}
+              className="relative aspect-video bg-zinc-800 border-2 border-dashed border-zinc-700 rounded-2xl overflow-hidden cursor-pointer hover:border-orange-500/50 transition-all group"
+            >
+              {imagePreview ? (
+                <img src={imagePreview} className="w-full h-full object-cover" alt="Preview" />
+              ) : (
+                <div className="w-full h-full flex flex-col items-center justify-center text-zinc-600 gap-2">
+                  <Camera className="w-8 h-8" />
+                  <span className="text-xs font-bold uppercase tracking-widest">Upload Photo</span>
+                </div>
+              )}
+            </div>
             <input 
-              required
-              type="number"
-              value={mileage}
-              onChange={e => setMileage(e.target.value)}
-              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-2xl font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+              id="mileage-image"
+              type="file"
+              accept="image/*"
+              onChange={handleImageChange}
+              className="hidden"
             />
-            <p className="text-xs text-zinc-500">Current: {bike.currentMileage.toLocaleString()} KM</p>
           </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Date</label>
+              <input 
+                required
+                type="date"
+                value={date}
+                onChange={e => setDate(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">New Total KM</label>
+              <input 
+                required
+                type="number"
+                value={mileage}
+                onChange={e => setMileage(e.target.value)}
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-2xl font-mono focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+              />
+            </div>
+          </div>
+          <p className="text-xs text-zinc-500 -mt-2">Current: {bike.currentMileage.toLocaleString()} KM</p>
           <div className="space-y-2">
-            <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Trip Distance (Optional)</label>
+            <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Trip Distance (KM) - Optional</label>
             <input 
               type="number"
               value={trip}
               onChange={e => setTrip(e.target.value)}
-              placeholder="Calculated automatically if empty"
+              placeholder="Auto-calculated if empty"
               className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
             />
           </div>
           <button 
             type="submit"
-            className="w-full bg-orange-500 hover:bg-orange-600 text-white font-semibold py-4 rounded-2xl transition-all shadow-lg shadow-orange-500/20 mt-4"
+            disabled={uploading}
+            className="w-full bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white font-semibold py-4 rounded-2xl transition-all shadow-lg shadow-orange-500/20 mt-4 flex items-center justify-center gap-2"
           >
-            Update Mileage
+            {uploading ? <Loader2 className="w-5 h-5 animate-spin" /> : <TrendingUp className="w-5 h-5" />}
+            {uploading ? 'Updating...' : 'Update Mileage'}
           </button>
         </form>
       </motion.div>
@@ -1634,6 +1922,7 @@ function FuelLogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
   const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [cost, setCost] = useState('');
   const [quantity, setQuantity] = useState('');
+  const [location, setLocation] = useState('');
   const [mileage, setMileage] = useState(bike.currentMileage.toString());
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -1673,6 +1962,7 @@ function FuelLogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
         cost: fuelCost,
         quantity: fuelQty,
         mileage: currentMileage,
+        location,
         imageUrl
       });
 
@@ -1713,7 +2003,7 @@ function FuelLogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           {/* Image Upload */}
           <div className="space-y-2">
-            <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Fuel Receipt Photo</label>
+            <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Fuel Receipt Photo (Optional)</label>
             <div 
               onClick={() => document.getElementById('fuel-image')?.click()}
               className="relative aspect-video bg-zinc-800 border-2 border-dashed border-zinc-700 rounded-2xl overflow-hidden cursor-pointer hover:border-orange-500/50 transition-all group"
@@ -1723,7 +2013,7 @@ function FuelLogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
               ) : (
                 <div className="w-full h-full flex flex-col items-center justify-center text-zinc-600 gap-2">
                   <Camera className="w-8 h-8" />
-                  <span className="text-xs font-bold uppercase tracking-widest">Upload Photo</span>
+                  <span className="text-xs font-bold uppercase tracking-widest">Upload Receipt</span>
                 </div>
               )}
               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -1736,6 +2026,16 @@ function FuelLogForm({ bike, onClose }: { bike: Bike, onClose: () => void }) {
               accept="image/*"
               onChange={handleImageChange}
               className="hidden"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-zinc-500 uppercase tracking-widest">Fuel Station / Location</label>
+            <input 
+              type="text"
+              placeholder="e.g. Shell, Highway 44"
+              value={location}
+              onChange={e => setLocation(e.target.value)}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
             />
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -1979,6 +2279,840 @@ function ImageModal({ imageUrl, onClose }: { imageUrl: string, onClose: () => vo
         >
           <X className="w-6 h-6" />
         </button>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ProjectInfoModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<'about' | 'developer'>('about');
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col max-h-[90vh]"
+      >
+        <div className="p-8 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50 backdrop-blur-xl">
+          <div className="flex items-center gap-3">
+            <div className="bg-orange-500 p-2 rounded-xl">
+              <Info className="w-5 h-5 text-white" />
+            </div>
+            <h3 className="text-xl font-bold tracking-tight">Project Info</h3>
+          </div>
+          <button onClick={onClose} className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-xl transition-all">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        <div className="flex border-b border-zinc-800 px-8 bg-zinc-900/30">
+          <button 
+            onClick={() => setTab('about')}
+            className={cn(
+              "px-6 py-4 text-sm font-bold uppercase tracking-widest transition-all border-b-2",
+              tab === 'about' ? "border-orange-500 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
+            )}
+          >
+            About MotoLog
+          </button>
+          <button 
+            onClick={() => setTab('developer')}
+            className={cn(
+              "px-6 py-4 text-sm font-bold uppercase tracking-widest transition-all border-b-2",
+              tab === 'developer' ? "border-orange-500 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
+            )}
+          >
+            The Developer
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+          {tab === 'about' ? (
+            <div className="space-y-8">
+              <section className="space-y-4">
+                <h4 className="text-orange-500 text-[10px] font-black uppercase tracking-[0.3em]">The Vision</h4>
+                <p className="text-zinc-300 leading-relaxed">
+                  MotoLog was born from a simple need: a dedicated space for motorcycle enthusiasts to document their machine's journey. Keeping track of service intervals, chain maintenance, and fuel efficiency shouldn't be a chore—it should be part of the riding experience.
+                </p>
+              </section>
+
+              <section className="space-y-4">
+                <h4 className="text-orange-500 text-[10px] font-black uppercase tracking-[0.3em]">Key Features</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { icon: <Gauge className="w-4 h-4" />, title: "Odometer Tracking", desc: "Monitor your total distance and ride trends." },
+                    { icon: <Wrench className="w-4 h-4" />, title: "Service History", desc: "Detailed logs of maintenance and repairs." },
+                    { icon: <Droplets className="w-4 h-4" />, title: "Smart Reminders", desc: "Never miss a chain lube or bike wash." },
+                    { icon: <Fuel className="w-4 h-4" />, title: "Fuel Efficiency", desc: "Track mileage and fuel costs over time." }
+                  ].map((feat, i) => (
+                    <div key={i} className="bg-zinc-800/50 p-4 rounded-2xl border border-zinc-800">
+                      <div className="flex items-center gap-2 mb-2 text-white">
+                        <div className="text-orange-500">{feat.icon}</div>
+                        <span className="font-bold text-sm">{feat.title}</span>
+                      </div>
+                      <p className="text-xs text-zinc-500">{feat.desc}</p>
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              <section className="space-y-4">
+                <h4 className="text-orange-500 text-[10px] font-black uppercase tracking-[0.3em]">Tech Stack</h4>
+                <div className="flex flex-wrap gap-2">
+                  {['React 18', 'TypeScript', 'Firebase Auth', 'Firestore', 'Firebase Storage', 'Tailwind CSS', 'Framer Motion', 'Lucide Icons'].map(tech => (
+                    <span key={tech} className="px-3 py-1.5 bg-zinc-800 text-zinc-400 text-[10px] font-bold uppercase tracking-widest rounded-lg border border-zinc-700">
+                      {tech}
+                    </span>
+                  ))}
+                </div>
+              </section>
+            </div>
+          ) : (
+            <div className="space-y-8">
+              <div className="flex flex-col items-center text-center space-y-4">
+                <div className="relative group">
+                  <div className="absolute -inset-4 bg-orange-500/20 rounded-full blur-2xl group-hover:bg-orange-500/30 transition-all" />
+                  <div className="relative w-32 h-32 rounded-full overflow-hidden border-4 border-zinc-800 shadow-2xl">
+                    <img 
+                      src="https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=200" 
+                      className="w-full h-full object-cover"
+                      alt="Developer"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <h4 className="text-2xl font-black text-white tracking-tight">Srinivas</h4>
+                  <p className="text-orange-500 text-[10px] font-black uppercase tracking-[0.3em]">Full-Stack Developer</p>
+                </div>
+                <p className="text-zinc-400 max-w-md leading-relaxed">
+                  Passionate about building clean, functional web applications that solve real-world problems. MotoLog is a reflection of my journey in mastering modern web technologies.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <a 
+                  href="https://github.com" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between bg-zinc-800/50 p-5 rounded-2xl border border-zinc-800 hover:border-orange-500/50 hover:bg-zinc-800 transition-all group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="bg-zinc-900 p-3 rounded-xl group-hover:text-orange-500 transition-colors">
+                      <Github className="w-6 h-6" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">GitHub</p>
+                      <p className="text-sm font-bold text-white">View Source Code</p>
+                    </div>
+                  </div>
+                  <ExternalLink className="w-4 h-4 text-zinc-600 group-hover:text-orange-500 transition-colors" />
+                </a>
+                <a 
+                  href="https://linkedin.com" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-between bg-zinc-800/50 p-5 rounded-2xl border border-zinc-800 hover:border-orange-500/50 hover:bg-zinc-800 transition-all group"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="bg-zinc-900 p-3 rounded-xl group-hover:text-orange-500 transition-colors">
+                      <Linkedin className="w-6 h-6" />
+                    </div>
+                    <div className="text-left">
+                      <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">LinkedIn</p>
+                      <p className="text-sm font-bold text-white">Let's Connect</p>
+                    </div>
+                  </div>
+                  <ExternalLink className="w-4 h-4 text-zinc-600 group-hover:text-orange-500 transition-colors" />
+                </a>
+              </div>
+
+              <div className="bg-orange-500/10 border border-orange-500/20 p-6 rounded-3xl text-center space-y-4">
+                <h5 className="text-white font-bold">Looking for a Developer?</h5>
+                <p className="text-sm text-zinc-400">
+                  I'm currently open to new opportunities and collaborations. If you like my work, feel free to reach out!
+                </p>
+                <button 
+                  onClick={() => window.location.href = 'mailto:srinivas7lakshmi@gmail.com'}
+                  className="bg-orange-500 hover:bg-orange-600 text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg shadow-orange-500/20"
+                >
+                  Get In Touch
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ProfileSettingsModal({ profile, onClose, playNotificationSound }: { profile: UserProfile, onClose: () => void, playNotificationSound: () => void }) {
+  const [activeTab, setActiveTab] = useState<'profile' | 'documents' | 'downloads'>('profile');
+  const [displayName, setDisplayName] = useState(profile.displayName || '');
+  const [username, setUsername] = useState(profile.username || '');
+  const [phoneNumber, setPhoneNumber] = useState(profile.phoneNumber || '');
+  const [email, setEmail] = useState(profile.email || '');
+  const [age, setAge] = useState(profile.age?.toString() || '');
+  const [dateOfBirth, setDateOfBirth] = useState(profile.dateOfBirth || '');
+  const [bio, setBio] = useState(profile.bio || '');
+  const [location, setLocation] = useState(profile.location || '');
+  const [photoURL, setPhotoURL] = useState(profile.photoURL || '');
+  const [customSoundURL, setCustomSoundURL] = useState(profile.customSoundURL || '');
+  const [theme, setTheme] = useState<'light' | 'dark'>(profile.theme || 'dark');
+  
+  // Credentials
+  const [drivingLicenseUrl, setDrivingLicenseUrl] = useState(profile.drivingLicenseUrl || '');
+  const [rcBookUrl, setRcBookUrl] = useState(profile.rcBookUrl || '');
+  const [bikeDocsUrl, setBikeDocsUrl] = useState(profile.bikeDocsUrl || '');
+  const [insuranceUrl, setInsuranceUrl] = useState(profile.insuranceUrl || '');
+  
+  const [uploading, setUploading] = useState(false);
+  const [uploadingSound, setUploadingSound] = useState(false);
+  const [uploadingDoc, setUploadingDoc] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [deletingFile, setDeletingFile] = useState<string | null>(null);
+
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploading(true);
+    try {
+      const storageRef = ref(storage, `profiles/${profile.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      setPhotoURL(url);
+    } catch (error) {
+      console.error('Upload failed:', error);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDocUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'dl' | 'rc' | 'docs' | 'ins' | 'emergency') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingDoc(type);
+    try {
+      const folder = type === 'emergency' ? 'emergency' : 'credentials';
+      const storageRef = ref(storage, `${folder}/${profile.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      
+      if (type === 'dl') setDrivingLicenseUrl(url);
+      else if (type === 'rc') setRcBookUrl(url);
+      else if (type === 'docs') setBikeDocsUrl(url);
+      else if (type === 'ins') setInsuranceUrl(url);
+      else if (type === 'emergency') {
+        const newFile = {
+          name: file.name,
+          url,
+          type: file.type,
+          uploadedAt: new Date().toISOString()
+        };
+        const updatedFiles = [...(profile.emergencyFiles || []), newFile];
+        await updateDoc(doc(db, 'users', profile.uid), {
+          emergencyFiles: updatedFiles
+        });
+      }
+    } catch (error) {
+      console.error('Document upload failed:', error);
+    } finally {
+      setUploadingDoc(null);
+    }
+  };
+
+  const removeEmergencyFile = async (fileUrl: string) => {
+    setDeletingFile(fileUrl);
+    try {
+      const updatedFiles = (profile.emergencyFiles || []).filter(f => f.url !== fileUrl);
+      await updateDoc(doc(db, 'users', profile.uid), {
+        emergencyFiles: updatedFiles
+      });
+    } catch (error) {
+      console.error('Failed to delete file:', error);
+    } finally {
+      setDeletingFile(null);
+    }
+  };
+
+  const handleSoundChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingSound(true);
+    try {
+      const storageRef = ref(storage, `sounds/${profile.uid}/${Date.now()}_${file.name}`);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      setCustomSoundURL(url);
+    } catch (error) {
+      console.error('Sound upload failed:', error);
+    } finally {
+      setUploadingSound(false);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), {
+        displayName,
+        username,
+        phoneNumber,
+        email,
+        age: age ? parseInt(age) : null,
+        dateOfBirth,
+        bio,
+        location,
+        photoURL,
+        customSoundURL,
+        theme,
+        drivingLicenseUrl,
+        rcBookUrl,
+        bikeDocsUrl,
+        insuranceUrl
+      });
+      onClose();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${profile.uid}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-zinc-900 border border-zinc-800 w-full max-w-3xl rounded-[2.5rem] overflow-hidden shadow-2xl flex flex-col md:flex-row max-h-[90vh]"
+      >
+        {/* Sidebar Navigation */}
+        <div className="w-full md:w-64 bg-zinc-950/50 border-r border-zinc-800 p-6 flex flex-col gap-2">
+          <div className="flex items-center gap-3 mb-8 px-2">
+            <div className="bg-orange-500 p-2 rounded-xl">
+              <Settings className="w-5 h-5 text-white" />
+            </div>
+            <h3 className="text-xl font-bold tracking-tight">Settings</h3>
+          </div>
+          
+          <button 
+            onClick={() => setActiveTab('profile')}
+            className={cn(
+              "flex items-center gap-3 px-4 py-3 rounded-2xl transition-all font-bold text-sm",
+              activeTab === 'profile' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white hover:bg-zinc-800"
+            )}
+          >
+            <User2 className="w-4 h-4" />
+            Profile Settings
+          </button>
+          
+          <button 
+            onClick={() => setActiveTab('documents')}
+            className={cn(
+              "flex items-center gap-3 px-4 py-3 rounded-2xl transition-all font-bold text-sm",
+              activeTab === 'documents' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white hover:bg-zinc-800"
+            )}
+          >
+            <Shield className="w-4 h-4" />
+            Documents
+          </button>
+          
+          <button 
+            onClick={() => setActiveTab('downloads')}
+            className={cn(
+              "flex items-center gap-3 px-4 py-3 rounded-2xl transition-all font-bold text-sm",
+              activeTab === 'downloads' ? "bg-orange-500 text-white shadow-lg shadow-orange-500/20" : "text-zinc-500 hover:text-white hover:bg-zinc-800"
+            )}
+          >
+            <Download className="w-4 h-4" />
+            Downloads
+          </button>
+          
+          <div className="mt-auto pt-6 border-t border-zinc-800/50">
+            <button 
+              onClick={onClose}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-zinc-500 hover:text-white hover:bg-zinc-800 transition-all font-bold text-sm"
+            >
+              <X className="w-4 h-4" />
+              Close
+            </button>
+          </div>
+        </div>
+
+        {/* Content Area */}
+        <div className="flex-1 flex flex-col min-h-0">
+          <div className="p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50 backdrop-blur-xl">
+            <h4 className="text-lg font-bold tracking-tight">
+              {activeTab === 'profile' && 'Profile Settings'}
+              {activeTab === 'documents' && 'Documents'}
+              {activeTab === 'downloads' && 'Downloads'}
+            </h4>
+          </div>
+
+          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+            {activeTab === 'profile' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                {/* Avatar Upload */}
+                <div className="flex flex-col items-center gap-4">
+                  <div className="relative group">
+                    <div className="w-28 h-28 rounded-full overflow-hidden border-4 border-zinc-800 shadow-xl bg-zinc-800">
+                      {photoURL ? (
+                        <img src={photoURL} className="w-full h-full object-cover" alt="Avatar" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-zinc-600">
+                          <User2 className="w-14 h-14" />
+                        </div>
+                      )}
+                      {uploading && (
+                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                          <Loader2 className="w-6 h-6 text-white animate-spin" />
+                        </div>
+                      )}
+                    </div>
+                    <button 
+                      type="button"
+                      onClick={() => document.getElementById('avatar-upload')?.click()}
+                      className="absolute bottom-0 right-0 bg-orange-500 p-2.5 rounded-full text-white shadow-lg hover:bg-orange-600 transition-all"
+                    >
+                      <Camera className="w-4 h-4" />
+                    </button>
+                    <input 
+                      id="avatar-upload"
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageChange}
+                      className="hidden"
+                    />
+                  </div>
+                  <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Change Profile Picture</p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Username</label>
+                    <input 
+                      value={username}
+                      onChange={e => setUsername(e.target.value)}
+                      placeholder="@username"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Phone Number</label>
+                    <input 
+                      value={phoneNumber}
+                      onChange={e => setPhoneNumber(e.target.value)}
+                      placeholder="+1 234 567 890"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Mail ID</label>
+                    <input 
+                      type="email"
+                      value={email}
+                      onChange={e => setEmail(e.target.value)}
+                      placeholder="rider@example.com"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Age</label>
+                    <input 
+                      type="number"
+                      value={age}
+                      onChange={e => setAge(e.target.value)}
+                      placeholder="25"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Date of Birth</label>
+                    <input 
+                      type="date"
+                      value={dateOfBirth}
+                      onChange={e => setDateOfBirth(e.target.value)}
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Location</label>
+                    <input 
+                      value={location}
+                      onChange={e => setLocation(e.target.value)}
+                      placeholder="City, Country"
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Bio</label>
+                  <textarea 
+                    value={bio}
+                    onChange={e => setBio(e.target.value)}
+                    placeholder="Tell us about your riding journey..."
+                    rows={3}
+                    className="w-full bg-zinc-800 border border-zinc-700 rounded-2xl px-4 py-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all resize-none"
+                  />
+                </div>
+
+                <div className="space-y-4">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">App Theme</label>
+                  <div className="bg-zinc-800/50 border border-zinc-700 rounded-3xl p-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-zinc-900 p-3 rounded-2xl">
+                          {theme === 'dark' ? <Moon className="w-5 h-5 text-orange-500" /> : <Sun className="w-5 h-5 text-orange-500" />}
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-white">Theme Mode</p>
+                          <p className="text-[10px] text-zinc-500">Switch between light and dark interface</p>
+                        </div>
+                      </div>
+                      <div className="flex bg-zinc-900 p-1 rounded-2xl border border-zinc-800">
+                        <button 
+                          type="button"
+                          onClick={() => setTheme('light')}
+                          className={cn(
+                            "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2",
+                            theme === 'light' ? "bg-orange-500 text-white shadow-lg" : "text-zinc-500 hover:text-white"
+                          )}
+                        >
+                          <Sun className="w-3.5 h-3.5" />
+                          Light
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => setTheme('dark')}
+                          className={cn(
+                            "px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2",
+                            theme === 'dark' ? "bg-orange-500 text-white shadow-lg" : "text-zinc-500 hover:text-white"
+                          )}
+                        >
+                          <Moon className="w-3.5 h-3.5" />
+                          Dark
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Notifications & Sound</label>
+                  <div className="bg-zinc-800/50 border border-zinc-700 rounded-3xl p-6 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-zinc-900 p-3 rounded-2xl">
+                          <Bell className="w-5 h-5 text-orange-500" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-white">In-App Alerts</p>
+                          <p className="text-[10px] text-zinc-500">Enable bike ignition sound alerts</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button 
+                          type="button"
+                          onClick={playNotificationSound}
+                          className="p-2 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-500 hover:text-orange-500 transition-all"
+                          title="Test Sound"
+                        >
+                          <Volume2 className="w-4 h-4" />
+                        </button>
+                        <div className="w-12 h-7 bg-orange-500 rounded-full flex items-center px-1">
+                          <div className="w-5 h-5 bg-white rounded-full ml-auto shadow-md" />
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="bg-zinc-900 p-3 rounded-2xl">
+                          <Music className="w-5 h-5 text-orange-500" />
+                        </div>
+                        <div>
+                          <p className="text-sm font-bold text-white">Custom Bike Sound</p>
+                          <p className="text-[10px] text-zinc-500">Upload your own engine rev sound</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button 
+                          type="button"
+                          onClick={() => document.getElementById('sound-upload')?.click()}
+                          className="p-2 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-500 hover:text-orange-500 transition-all"
+                          title="Upload Sound"
+                        >
+                          {uploadingSound ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
+                        </button>
+                        <input 
+                          id="sound-upload"
+                          type="file"
+                          accept="audio/*"
+                          onChange={handleSoundChange}
+                          className="hidden"
+                        />
+                        {customSoundURL && (
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              const audio = new Audio(customSoundURL);
+                              audio.play();
+                            }}
+                            className="p-2 bg-orange-500/10 border border-orange-500/20 rounded-xl text-orange-500 hover:bg-orange-500/20 transition-all"
+                          >
+                            <Volume2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'documents' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                <div className="bg-orange-500/10 border border-orange-500/20 rounded-3xl p-6 flex gap-4">
+                  <Shield className="w-6 h-6 text-orange-500 shrink-0" />
+                  <div>
+                    <h5 className="text-sm font-bold text-white">Safety & Compliance</h5>
+                    <p className="text-xs text-zinc-400 mt-1 leading-relaxed">Keep your essential documents safe and accessible for emergencies. These are stored securely in your private vault.</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {[
+                    { label: 'Driving License', id: 'dl', url: drivingLicenseUrl },
+                    { label: 'RC BOOK', id: 'rc', url: rcBookUrl },
+                    { label: 'Bike Documents', id: 'docs', url: bikeDocsUrl },
+                    { label: 'Insurance', id: 'ins', url: insuranceUrl }
+                  ].map((doc) => (
+                    <div key={doc.id} className="space-y-3">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">{doc.label}</label>
+                      <div 
+                        onClick={() => document.getElementById(`upload-${doc.id}`)?.click()}
+                        className="relative aspect-[4/3] bg-zinc-800 border-2 border-dashed border-zinc-700 rounded-3xl overflow-hidden cursor-pointer hover:border-orange-500/50 transition-all group"
+                      >
+                        {doc.url ? (
+                          <div className="w-full h-full relative">
+                            <img src={doc.url} className="w-full h-full object-cover" alt={doc.label} />
+                            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <Camera className="w-8 h-8 text-white" />
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="w-full h-full flex flex-col items-center justify-center text-zinc-600 gap-3">
+                            <div className="bg-zinc-900 p-4 rounded-2xl group-hover:bg-zinc-800 transition-colors">
+                              <FileText className="w-8 h-8" />
+                            </div>
+                            <span className="text-[10px] font-bold uppercase tracking-widest">Upload {doc.label}</span>
+                          </div>
+                        )}
+                        {uploadingDoc === doc.id && (
+                          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+                            <Loader2 className="w-8 h-8 text-white animate-spin" />
+                          </div>
+                        )}
+                      </div>
+                      <input 
+                        id={`upload-${doc.id}`}
+                        type="file"
+                        accept="image/*,application/pdf"
+                        onChange={(e) => handleDocUpload(e, doc.id as any)}
+                        className="hidden"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'downloads' && (
+              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <h5 className="text-lg font-bold text-white">Emergency Vault</h5>
+                    <p className="text-xs text-zinc-500">Quick access to all your uploaded documents and photos.</p>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => document.getElementById('emergency-upload')?.click()}
+                    className="bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add File
+                  </button>
+                  <input 
+                    id="emergency-upload"
+                    type="file"
+                    onChange={(e) => handleDocUpload(e, 'emergency')}
+                    className="hidden"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 gap-4">
+                  {profile.emergencyFiles && profile.emergencyFiles.length > 0 ? (
+                    profile.emergencyFiles.map((file, idx) => (
+                      <div key={idx} className="bg-zinc-800/50 border border-zinc-700 p-4 rounded-2xl flex items-center justify-between group hover:border-zinc-600 transition-all">
+                        <div className="flex items-center gap-4">
+                          <div className="bg-zinc-900 p-3 rounded-xl">
+                            <FileText className="w-5 h-5 text-orange-500" />
+                          </div>
+                          <div>
+                            <p className="text-sm font-bold text-white truncate max-w-[200px]">{file.name}</p>
+                            <p className="text-[10px] text-zinc-500 uppercase tracking-widest">{format(parseISO(file.uploadedAt), 'MMM d, yyyy')}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <a 
+                            href={file.url} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="p-2 bg-zinc-900 text-zinc-400 hover:text-white hover:bg-orange-500 rounded-xl transition-all"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
+                          <button 
+                            type="button"
+                            onClick={() => removeEmergencyFile(file.url)}
+                            disabled={deletingFile === file.url}
+                            className="p-2 bg-zinc-900 text-zinc-400 hover:text-red-500 hover:bg-red-500/10 rounded-xl transition-all"
+                          >
+                            {deletingFile === file.url ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="py-12 flex flex-col items-center justify-center border-2 border-dashed border-zinc-800 rounded-3xl text-zinc-600 gap-4">
+                      <HardDrive className="w-12 h-12 opacity-20" />
+                      <p className="text-sm font-medium">No emergency files uploaded yet.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="pt-8 flex gap-4">
+              <button 
+                type="submit"
+                disabled={saving || uploading}
+                className="flex-1 px-8 py-4 bg-orange-500 hover:bg-orange-600 disabled:bg-orange-500/50 text-white font-bold rounded-2xl transition-all shadow-lg shadow-orange-500/20 flex items-center justify-center gap-3"
+              >
+                {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+                {saving ? 'Saving Changes...' : 'Save All Settings'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function NextServicePrompt({ bikeId, onClose }: { bikeId: string, onClose: () => void }) {
+  const [date, setDate] = useState('');
+  const [title, setTitle] = useState('Next Scheduled Service');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!date) return;
+    
+    setSaving(true);
+    try {
+      await addDoc(collection(db, 'reminders'), {
+        bikeId,
+        userId: auth.currentUser?.uid,
+        title,
+        date,
+        type: 'maintenance',
+        isCompleted: false
+      });
+      onClose();
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'reminders');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-md flex items-center justify-center p-4"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl text-center space-y-6"
+      >
+        <div className="flex justify-center">
+          <div className="bg-orange-500/20 p-4 rounded-full animate-pulse">
+            <Calendar className="w-12 h-12 text-orange-500" />
+          </div>
+        </div>
+        <div className="space-y-2">
+          <h3 className="text-2xl font-black text-white tracking-tight italic">SERVICE DONE!</h3>
+          <p className="text-zinc-400 text-sm">Great job keeping your machine healthy. When is the next service due?</p>
+        </div>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2 text-left">
+            <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest ml-1">Next Service Date</label>
+            <input 
+              required
+              type="date"
+              value={date}
+              onChange={e => setDate(e.target.value)}
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-orange-500/50 transition-all"
+            />
+          </div>
+          <div className="flex gap-3">
+            <button 
+              type="button"
+              onClick={onClose}
+              className="flex-1 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-white font-bold rounded-xl transition-all text-sm"
+            >
+              Skip
+            </button>
+            <button 
+              type="submit"
+              disabled={saving}
+              className="flex-[2] px-4 py-3 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-xl transition-all shadow-lg shadow-orange-500/20 flex items-center justify-center gap-2 text-sm"
+            >
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+              Set Reminder
+            </button>
+          </div>
+        </form>
       </motion.div>
     </motion.div>
   );
